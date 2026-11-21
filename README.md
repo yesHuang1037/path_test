@@ -38,7 +38,9 @@ https://github.com/user-attachments/assets/041856f4-c33e-4f42-a5ac-2c3a060bfb0f
 
 ## 环境配置
 
-核心依赖为支持C++11的编译器、Eigen3、OSQP和OsqpEigen。OSQP 与 OsqpEigen以固定版本作为子模块放在 `3rd` 目录中，运行环境配置脚本即可完成依赖安装、子模块初始化和依赖构建：
+当前构建需要支持 C++17 的编译器、CMake 3.8 及以上、Eigen3、OSQP 和 OsqpEigen。
+依赖部署脚本仍有交接文档记录的子模块缺失问题；已有 `/usr/local` 安装可直接供 CMake 查找，
+不要假定下面的脚本能够在全新环境完成安装：
 
 ```bash
 ./scripts/setup.sh
@@ -132,6 +134,19 @@ make -j4
 | Minimum Snap | 3901.7 us | 126698 us |
 | 生成代价地图 | 1588.52 us | 3613.08 us |
 | 化简路径 | 26.0119 us | 117.99 us |
+
+## 自动测试与历史复现
+
+```bash
+python3 scripts/run_benchmark.py
+python3 scripts/run_benchmark.py --map images/inside_map.png --resolution 0.05 --count 100
+```
+
+C++ 执行算法并计时，Python 保存日志和汇总报告。每次运行自动保存时间种子、地图和输入，
+支持手动重跑任意历史样例或查看当次轨迹。原来的 `cd build && ./play` 保留手动演示。
+
+- [简明使用指南](doc/BenchmarkUsage.md)
+- [本次变更说明](doc/BenchmarkChanges.md)
 
 ## 文档
 

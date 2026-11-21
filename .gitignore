@@ -3,6 +3,7 @@
 .ref
 
 build
+benchmark-results/
 tests/*
 3rd/*
 

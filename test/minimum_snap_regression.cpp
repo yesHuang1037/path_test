@@ -33,7 +33,7 @@ int main(){
             }
 
             const auto result = solver.solve(input);
-            bool ok = result.success && !result.path.empty();
+            bool ok = result.success && result.exitReason == "success" && !result.path.empty();
             if(ok){
                 ok = (result.path.front() - path.front()).norm() < 1e-4f &&
                     (result.path.back() - path.back()).norm() < 1e-4f;
@@ -57,5 +57,29 @@ int main(){
             passed = passed && ok;
         }
     }
+    // A wall separates fixed endpoints: a valid polynomial still fails collision checks.
+    // Check the actual stop conditions, independently of machine speed and OSQP convergence.
+    for(bool timeout : {false, true}){
+        MinimumSnap solver;
+        MinimumSnap::Map blocked = MinimumSnap::Map::Constant(160, 160, 255);
+        blocked.block(0, 60, 160, 20).setZero();
+        solver.setMap(blocked, 0.05f, 0.f, 0.f);
+        solver.setTL(timeout ? 1e-12 : 100.);
+        MinimumSnap::SolveInput input;
+        input.setPath({{1.f, 1.f}, {5.f, 1.f}});
+        input.setBackend(MinimumSnap::Backend::Close);
+        input.setCollisionCheckIter(timeout ? 6 : 1);
+        const auto result = solver.solve(input);
+        const bool ok = !result.success && !result.path.empty() && result.iter == 1 &&
+            result.collisionSegments > 0 && result.time > 0 &&
+            result.exitReason == (timeout ? "time_limit" : "iteration_limit") &&
+            result.timeLimitReached == timeout && result.iterationLimitReached == !timeout;
+        std::cout << "collision diagnostics timeout=" << timeout << " check=" << (ok ? "PASS" : "FAIL") << std::endl;
+        passed = passed && ok;
+    }
+    MinimumSnap invalidSolver;
+    MinimumSnap::SolveInput invalidInput;
+    const auto invalid = invalidSolver.solve(invalidInput);
+    passed = passed && !invalid.success && invalid.exitReason == "input_invalid";
     return passed ? 0 : 1;
 }

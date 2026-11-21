@@ -1,8 +1,8 @@
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.8)
 project(play)
 
-# set(CMAKE_CXX_STANDARD 11)
-# set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # # #使用release o2
 set(CMAKE_BUILD_TYPE "Release")
@@ -18,11 +18,13 @@ include_directories(
 )
 add_executable(play
     main.cpp
+    src/benchmark/benchmark.cpp
     ./src/YAstar/yastar.cpp
     ./src/YAstar/kinodynamicAstar.cpp
     ./src/MinimumSnapOsqp/minimumSnap.cpp
     ./src/MinimumSnapOsqp/sfcSquare.cpp
 )
+target_compile_definitions(play PRIVATE BENCHMARK_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 target_link_libraries(play
     ${OpenCV_LIBS}
@@ -40,4 +42,10 @@ if(BUILD_TESTING)
     target_include_directories(minimum_snap_regression PRIVATE ${PROJECT_SOURCE_DIR})
     target_link_libraries(minimum_snap_regression PRIVATE ${OpenCV_LIBS} OsqpEigen::OsqpEigen)
     add_test(NAME minimum_snap_regression COMMAND minimum_snap_regression)
+    find_package(PythonInterp 3 QUIET)
+    if(PYTHONINTERP_FOUND)
+        add_test(NAME benchmark_integration COMMAND ${PYTHON_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/test/test_benchmark.py --executable $<TARGET_FILE:play>)
+        set_tests_properties(benchmark_integration PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+    endif()
 endif()

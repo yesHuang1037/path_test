@@ -129,6 +129,7 @@ static MinimumSnap::SolveOutput iterate(
            coefficients.first.cols() != coefficients.second.cols() ||
            coefficients.first.cols() == 0){
             result.success = false;
+            result.exitReason = "backend_failure";
             break;
         }
 
@@ -140,6 +141,7 @@ static MinimumSnap::SolveOutput iterate(
                 [](const Eigen::Vector2f& point){return point.allFinite();})){
                 result.path.clear();
                 result.success = false;
+                result.exitReason = "sampling_failure";
                 result.iter = round + 1;
                 result.time = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
                 return result;
@@ -157,7 +159,12 @@ static MinimumSnap::SolveOutput iterate(
 
         result.iter = round + 1;
         result.success = bad.empty() && !result.path.empty();
+        result.collisionSegments = static_cast<int>(bad.size());
         double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
+        result.iterationLimitReached = round + 1 == maxIter;
+        result.timeLimitReached = elapsed >= timeLimit;
+        result.exitReason = result.success ? "success" :
+            (result.iterationLimitReached ? "iteration_limit" : "time_limit");
         if(result.success || round + 1 == maxIter || elapsed >= timeLimit){
             break;
         }
@@ -239,6 +246,7 @@ MinimumSnap::SolveOutput MinimumSnap::solve(SolveInput &input){
         result.path = input.getPath();
         // 单控制点没有可构造的分段，非零速度约束无法在此输入下满足。
         result.success = !items.front().useVxvy || items.front().vxvy.isZero();
+        result.exitReason = result.success ? "success" : "input_invalid";
         return result;
     }
 
@@ -783,8 +791,15 @@ std::pair<MinimumSnap::MatXd, MinimumSnap::MatXd> MinimumSnap::osqpExecute(
     const std::vector<double>& timeAllocated,
     const std::vector<SolveInput::Item>& items,
     const std::vector<std::array<float, 4>>& corridor,
-    bool normT
+    bool normT,
+    SolveOutput* diagnostics
 ) const{
+    if(diagnostics){
+        diagnostics->backendFailure = "invalid_qp_data";
+        diagnostics->osqpAxis = -1;
+        diagnostics->osqpStatus = -1;
+        diagnostics->osqpError = 0;
+    }
     if(!validTimes(timeAllocated, items.size(), order, _maxdx)){
         return {};
     }
@@ -881,6 +896,7 @@ std::pair<MinimumSnap::MatXd, MinimumSnap::MatXd> MinimumSnap::osqpExecute(
         }
 
         OsqpEigen::Solver solver;
+        if(diagnostics){ diagnostics->osqpAxis = axis; diagnostics->osqpStatus = -1; }
         solver.settings()->setVerbosity(false);
         solver.settings()->setPolish(true);
         solver.settings()->setAbsoluteTolerance(1e-8);
@@ -896,13 +912,20 @@ std::pair<MinimumSnap::MatXd, MinimumSnap::MatXd> MinimumSnap::osqpExecute(
            !solver.data()->setLowerBound(axisLow) ||
            !solver.data()->setUpperBound(axisUp) ||
            !solver.initSolver()){
+            if(diagnostics) diagnostics->backendFailure = "initialization_failure";
             return {};
         }
-        if(solver.solveProblem() != OsqpEigen::ErrorExitFlag::NoError ||
+        const auto solveError = solver.solveProblem();
+        if(diagnostics){
+            diagnostics->osqpStatus = static_cast<int>(solver.getStatus());
+            diagnostics->osqpError = static_cast<int>(solveError);
+        }
+        if(solveError != OsqpEigen::ErrorExitFlag::NoError ||
            (solver.getStatus() != OsqpEigen::Status::Solved &&
             solver.getStatus() != OsqpEigen::Status::SolvedInaccurate)){
             std::cout << "OSQP未收敛，方向=" << axis
                       << " 状态=" << static_cast<int>(solver.getStatus()) << std::endl;
+            if(diagnostics) diagnostics->backendFailure = "osqp_failure";
             return {};
         }
 
@@ -911,9 +934,11 @@ std::pair<MinimumSnap::MatXd, MinimumSnap::MatXd> MinimumSnap::osqpExecute(
         if(!solution.col(axis).allFinite() ||
            (axisLow - values).maxCoeff() > 1e-5 ||
            (values - axisUp).maxCoeff() > 1e-5){
+            if(diagnostics) diagnostics->backendFailure = "constraint_validation_failure";
             return {};
         }
     }
+    if(diagnostics) diagnostics->backendFailure.clear();
     return unpack(solution, order);
 }
 
@@ -931,6 +956,7 @@ MinimumSnap::SolveOutput MinimumSnap::_solve(
 
     std::vector<PointPair> corridor;
     bool corridorInitialized = false;
+    SolveOutput diagnostics;
     auto solveOnce = [&](const std::vector<double>& times, const std::vector<Item>& points){
         if(!corridorInitialized){
             std::vector<Eigen::Vector2f> path;
@@ -948,6 +974,7 @@ MinimumSnap::SolveOutput MinimumSnap::_solve(
             corridorInitialized = true;
         }
         if(corridor.size() != points.size()){
+            diagnostics.backendFailure = "corridor_size_mismatch";
             return std::pair<MatXd, MatXd>{};
         }
 
@@ -956,7 +983,7 @@ MinimumSnap::SolveOutput MinimumSnap::_solve(
                 corridor[i] = points[i].corridor;
             }
         }
-        return osqpExecute(times, points, corridor, normT);
+        return osqpExecute(times, points, corridor, normT, &diagnostics);
     };
     auto sample = [&](const std::vector<double>& times, int index, const MatXd& x, const MatXd& y){
         return lineDecoder(times, index, x, y, normT);
@@ -1003,6 +1030,10 @@ MinimumSnap::SolveOutput MinimumSnap::_solve(
     };
     auto result = iterate(timeAllocated, items, maxIter, timeLimit, solveOnce, sample, collision, update);
     result.corridor = corridor;
+    result.backendFailure = diagnostics.backendFailure;
+    result.osqpAxis = diagnostics.osqpAxis;
+    result.osqpStatus = diagnostics.osqpStatus;
+    result.osqpError = diagnostics.osqpError;
     return result;
 }
 

@@ -12,6 +12,7 @@
 #include <iostream>
 #include <limits>
 #include <mutex>
+#include <string>
 #include <utility>
 #include <vector>
 #include <OsqpEigen/OsqpEigen.h>
@@ -182,6 +183,14 @@ public:
         int iter = 0;                       // 求解迭代次数
         double time = 0.;                   // 求解时间
         bool success = false;
+        std::string exitReason = "input_invalid";
+        std::string backendFailure;
+        int collisionSegments = 0;          // 最后完成采样检查的多项式分段数
+        bool iterationLimitReached = false;
+        bool timeLimitReached = false;
+        int osqpAxis = -1;                  // -1: 未运行 OSQP，0: X，1: Y
+        int osqpStatus = -1;
+        int osqpError = 0;
     };
 
     MinimumSnap()=default;
@@ -277,7 +286,8 @@ protected:
         const std::vector<double>& timeAllocated,
         const std::vector<SolveInput::Item>& items,
         const std::vector<std::array<float, 4>>& corridor,
-        bool normT
+        bool normT,
+        SolveOutput* diagnostics = nullptr
     ) const;
 
     // OSQP迭代后端：发生碰撞时插入Item或收缩自动走廊，保留已有Item的约束。
