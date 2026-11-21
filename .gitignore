@@ -1,0 +1,13 @@
+.cache
+.vscode
+.ref
+
+build
+tests/*
+3rd/*
+
+!3rd/.gitkeep
+
+./marscode/*
+./test/*
+./tmp/*
